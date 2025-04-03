@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.jobscraper</groupId>
+    <artifactId>JobScraper</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <name>JobScraper</name>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <jsoup.version>1.17.2</jsoup.version>
+        <opencsv.version>5.9</opencsv.version>
+        <junit.version>5.10.2</junit.version>
+        <javafx.sdk.path>/Users/bilus/javafx-sdk-23.0.1</javafx.sdk.path>
+    </properties>
+
+    <dependencies>
+        <!-- JavaFX lokalnie -->
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-controls</artifactId>
+            <version>23.0.1</version>
+            <scope>system</scope>
+            <systemPath>${javafx.sdk.path}/lib/javafx.controls.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-fxml</artifactId>
+            <version>23.0.1</version>
+            <scope>system</scope>
+            <systemPath>${javafx.sdk.path}/lib/javafx.fxml.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-base</artifactId>
+            <version>23.0.1</version>
+            <scope>system</scope>
+            <systemPath>${javafx.sdk.path}/lib/javafx.base.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-graphics</artifactId>
+            <version>23.0.1</version>
+            <scope>system</scope>
+            <systemPath>${javafx.sdk.path}/lib/javafx.graphics.jar</systemPath>
+        </dependency>
+
+        <!-- Jsoup -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.17.2</version>
+        </dependency>
+
+        <!-- OpenCSV -->
+        <dependency>
+            <groupId>com.opencsv</groupId>
+            <artifactId>opencsv</artifactId>
+            <version>5.9</version>
+        </dependency>
+        <!-- Selenium -->
+        <dependency>
+            <groupId>org.seleniumhq.selenium</groupId>
+            <artifactId>selenium-java</artifactId>
+            <version>4.30.0</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.github.bonigarcia</groupId>
+            <artifactId>webdrivermanager</artifactId>
+            <version>6.0.1</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Kompilator Maven -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <source>${maven.compiler.source}</source>
+                    <target>${maven.compiler.target}</target>
+                </configuration>
+            </plugin>
+
+            <!-- JavaFX Maven Plugin -->
+            <plugin>
+                <groupId>org.openjfx</groupId>
+                <artifactId>javafx-maven-plugin</artifactId>
+                <version>0.0.8</version>
+                <configuration>
+                    <mainClass>org.jobscraper.jobscraper.HelloApplication</mainClass>
+                    <launcher>jobscraper</launcher>
+                    <jlinkZipName>jobscraper</jlinkZipName>
+                    <jlinkImageName>jobscraper</jlinkImageName>
+                    <noManPages>true</noManPages>
+                    <stripDebug>true</stripDebug>
+                    <noHeaderFiles>true</noHeaderFiles>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
