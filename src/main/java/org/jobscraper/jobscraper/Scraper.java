@@ -2,115 +2,179 @@ package org.jobscraper.jobscraper;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Element;
-import org.jsoup.select.Elements;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Scraper {
+    private final List<JobOffer> jobOffers = new ArrayList<>();
+    private final List<String> offerLinks = new ArrayList<>();
+    private final Set<String> offerLinksSet = Collections.synchronizedSet(new HashSet<>()); // Added as class field
+    private final Set<String> processedLinks = Collections.synchronizedSet(new HashSet<>());
     private final String keywords;
     private final String location;
-    private final String distance;
-    private final boolean useItSubpage;
-    private final AtomicInteger offerCount = new AtomicInteger(0);
-    private volatile boolean isCancelled = false;
-    private final List<JobOffer> jobOffers = new ArrayList<>();
-    private final ExecutorService executorService = Executors.newFixedThreadPool(4);
-    private final List<String> offerUrlsList = new ArrayList<>();
+    private String distance;
+    private final boolean scrapePracuj;
+    private final boolean scrapeJustJoinIt;
+    private final HelloApplication ui;
+    private boolean finished = false;
+    private int maxOffers = 100; // Default value
+    private AtomicBoolean isCancelled = new AtomicBoolean(false);
+    private ExecutorService executor;
+    private static final String[] USER_AGENTS = {
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0"
+    };
 
-    public Scraper(String keywords, String location, String distance, boolean useItSubpage) {
-        this.keywords = keywords != null && !keywords.isEmpty() ? keywords : "";
-        this.location = location != null && !location.isEmpty() ? location : "";
-        this.distance = distance != null && !distance.isEmpty() ? distance : "0";
-        this.useItSubpage = useItSubpage;
+    public Scraper(String keywords, String location, String distance, boolean scrapePracuj,
+                   boolean scrapeJustJoinIt, HelloApplication ui) {
+        this.keywords = keywords;
+        this.location = location;
+        this.distance = distance;
+        this.scrapePracuj = scrapePracuj;
+        this.scrapeJustJoinIt = scrapeJustJoinIt;
+        this.ui = ui;
     }
 
-    public void startScraping(HelloApplication ui) {
-        new Thread(() -> {
+    private String getRandomUserAgent() {
+        int index = (int) (Math.random() * USER_AGENTS.length);
+        return USER_AGENTS[index];
+    }
+
+    public void startScraping() {
+        Thread scraperThread = new Thread(() -> {
             try {
-                scrapeMainPages();
-                scrapeJobOffers(ui);
-                ui.finishScraping(offerCount.get());
-            } catch (Exception e) {
-                System.err.println("Error during scraping: " + e.getMessage());
+                // Use CopyOnWriteArrayList for thread safety
+                List<JobOffer> jobOffers = new CopyOnWriteArrayList<>();
+
+                // Create and start the individual scrapers
+                JustJoinItScraper justJoinItScraper = null;
+                PracujPlScraper pracujPlScraper = null;
+
+                if (scrapeJustJoinIt) {
+                    justJoinItScraper = new JustJoinItScraper(jobOffers, keywords, location, offerLinks, offerLinksSet, ui);
+                    justJoinItScraper.startScraping();
+                }
+
+                if (scrapePracuj) {
+                    pracujPlScraper = new PracujPlScraper(jobOffers, keywords, location, offerLinks, offerLinksSet, ui);
+                    pracujPlScraper.startScraping();
+                }
+
+                // Create thread pool for processing offers
+                executor = Executors.newFixedThreadPool(3);
+
+                // Monitor the progress and process links
+                JustJoinItScraper finalJustJoinItScraper = justJoinItScraper;
+                PracujPlScraper finalPracujPlScraper = pracujPlScraper;
+                System.out.println("Scraping details started...");
+                while (!isCancelled.get()) {
+                    boolean justJoinItDone = finalJustJoinItScraper == null || finalJustJoinItScraper.isFinished();
+                    boolean pracujPlDone = finalPracujPlScraper == null || finalPracujPlScraper.isFinished();
+
+                    // If both scrapers are done, break the loop
+                    if (justJoinItDone && pracujPlDone) {
+                        break;
+                    }
+
+                    // Process new links in batches
+                    List<String> unprocessedLinks = new ArrayList<>();
+                    synchronized (offerLinks) {
+                        for (String link : offerLinks) {
+                            if (!processedLinks.contains(link)) {
+                                unprocessedLinks.add(link);
+                                processedLinks.add(link);
+                            }
+                        }
+                    }
+
+                    // Submit tasks to process the links
+                    for (String link : unprocessedLinks) {
+                        if (isCancelled.get()) break;
+
+                        final String finalLink = link;
+                        executor.submit(() -> {
+                            if (finalLink.contains("justjoin.it") && finalJustJoinItScraper != null) {
+                                finalJustJoinItScraper.scrapeOfferDetails(finalLink);
+                            } else if (finalLink.contains("pracuj.pl") && finalPracujPlScraper != null) {
+                                finalPracujPlScraper.scrapeOfferDetails(finalLink);
+                            }
+                        });
+                    }
+
+                    // Update UI
+                    ui.updateUI(jobOffers.size(), offerLinksSet.size(), null);
+                    ui.updateLinksCount(offerLinksSet.size());
+
+                    Thread.sleep(1000);
+                }
+
+                // Shutdown the executor and wait for remaining tasks
+                if (executor != null && !executor.isShutdown()) {
+                    executor.shutdown();
+                    executor.awaitTermination(5, TimeUnit.SECONDS);
+                }
+
+                // Cancel scrapers if they're still running
+                if (finalJustJoinItScraper != null) {
+                    finalJustJoinItScraper.cancel();
+                }
+                if (finalPracujPlScraper != null) {
+                    finalPracujPlScraper.cancel();
+                }
+
+                // Update UI with final counts
+                ui.updateUI(jobOffers.size(), offerLinks.size(), true);
+
+                // Copy results to main lists
+                synchronized (this.jobOffers) {
+                    this.jobOffers.clear();
+                    this.jobOffers.addAll(jobOffers);
+                }
+
+                finished = true;
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
-        }).start();
+        });
+
+        scraperThread.setDaemon(true);
+        scraperThread.start();
     }
 
-    private void scrapeMainPages() throws IOException, InterruptedException {
-        String baseUrl = useItSubpage ? "https://it.pracuj.pl/praca/" : "https://www.pracuj.pl/praca/";
-        String urlParams = buildUrlParams();
-        int page = 1;
 
-        while (!isCancelled) {
-            String url = baseUrl + urlParams + (page > 1 ? "&pn=" + page : "");
-            System.out.println("Scraping page: " + url);
-            Document doc = Jsoup.connect(url).userAgent("Mozilla/5.0").timeout(10000).get();
-            Elements offerLinks = doc.select("a.tiles_cnb3rfy.core_n194fgoq");
-            if (offerLinks.isEmpty()) break;
+    private synchronized void checkIfFinished() {
+        boolean pracujDone = !scrapePracuj || new PracujPlScraper(jobOffers, keywords, location, offerLinks, offerLinksSet, ui).isFinished();
+        boolean justJoinItDone = !scrapeJustJoinIt || new JustJoinItScraper(jobOffers, keywords, location, offerLinks, offerLinksSet, ui).isFinished();
 
-            for (Element link : offerLinks) {
-                if (isCancelled) return;
-                if (offerUrlsList.contains(link.attr("href"))) {return;}
-                offerUrlsList.add(link.absUrl("href"));
-            }
-            System.out.println(offerUrlsList);
-            page++;
-            Thread.sleep(5000);
+        finished = pracujDone && justJoinItDone;
+
+        if (finished && !isCancelled.get()) {
+            ui.finishScraping(jobOffers.size(), offerLinksSet.size());
         }
     }
 
-    private void scrapeJobOffers(HelloApplication ui) {
-        ExecutorService offerExecutor = Executors.newFixedThreadPool(4);
-        for (String offerUrl : offerUrlsList) {
-            if (isCancelled) break;
-            offerExecutor.submit(() -> scrapeOfferDetails(offerUrl, ui));
-        }
-        offerExecutor.shutdown();
-        try {
-            offerExecutor.awaitTermination(10, TimeUnit.MINUTES);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+    public boolean isFinished() {
+        return finished;
     }
 
-    private void scrapeOfferDetails(String offerUrl, HelloApplication ui) {
-        try {
-            Document offerDoc = Jsoup.connect(offerUrl).userAgent("Mozilla/5.0").timeout(10000).get();
-            String title = offerDoc.selectFirst("h1") != null ? offerDoc.selectFirst("h1").text() : "Brak tytułu";
-            String company = offerDoc.selectFirst("p[class*=company]") != null ? offerDoc.selectFirst("p[class*=company]").text() : "Brak firmy";
-            String salary = offerDoc.selectFirst("div[class*=salary]") != null ? offerDoc.selectFirst("div[class*=salary]").text() : "Brak danych o zarobkach";
-            String locationDetails = offerDoc.selectFirst("span[class*=location]") != null ? offerDoc.selectFirst("span[class*=location]").text() : "Brak lokalizacji";
-
-            synchronized (jobOffers) {
-                jobOffers.add(new JobOffer(title, company, salary, locationDetails, offerUrl));
-                ui.updateOffersCount(offerCount.incrementAndGet());
-            }
-            System.out.println("Scraped: " + title);
-        } catch (IOException e) {
-            System.err.println("Error scraping offer " + offerUrl + ": " + e.getMessage());
-        }
-    }
-
-    private String buildUrlParams() {
-        StringBuilder params = new StringBuilder();
-        if (!keywords.isEmpty()) {
-            params.append(keywords.replace(" ", "%20")).append(";kw");
-        }
-        if (!location.isEmpty()) {
-            params.append("/").append(location.replace(" ", "%20")).append(";wp");
-        }
-        if (!distance.equals("0")) {
-            params.append("?rd=").append(distance);
-        }
-        return params.toString();
+    public List<JobOffer> getJobOffers() {
+        return new ArrayList<>(jobOffers);
     }
 
     public void cancel() {
-        isCancelled = true;
+        isCancelled.set(true);
+        if (executor != null) {
+            executor.shutdownNow();
+        }
+        ui.finishScraping(jobOffers.size());
     }
 }
