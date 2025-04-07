@@ -1,0 +1,43 @@
+1. Które z podanych to przykłady problemów współbieżności?
+
+A. Starvation
+B. Deadlock
+C. Race conditions
+D. Threading
+	ODP:A,B,C
+
+
+2. Na czym polega problem Race conditions?
+
+A. Race condition występuje, gdy dwa wątki muszą czekać na dostęp do wspólnego zasobu, co powoduje opóźnienia w działaniu programu.
+B. Race condition występuje, gdy dwa wątki zmieniają dane w tym samym czasie, a wynik zależy od kolejności tych zmian.
+C. Race condition występuje, gdy wątki wykonują operacje na niezależnych zasobach, nie mając wpływu na siebie nawzajem.
+D. Race condition to sytuacja, gdy program nie jest w stanie rozróżnić, który wątek wykonuje zadanie jako pierwszy.
+	ODP:B
+
+
+3. Który z poniższych mechanizmów synchronizacji jest najczęściej używany do kontrolowania dostępu do współdzielonych zasobów w systemach wielowątkowych?
+
+A. Mutex
+B. Semaphore
+C. Lock
+D. Monitor
+	ODP: A
+
+
+4. Które z poniższych stwierdzeń dotyczących wątków i procesów jest prawdziwe?
+
+A. Wątki są lżejsze od procesów, ponieważ dzielą tę samą przestrzeń pamięciową.
+B. Procesy zawsze dzielą tę samą przestrzeń pamięciową, co wątki.
+C. Wątki w różnych procesach zawsze mogą komunikować się bezpośrednio, dzieląc tę samą przestrzeń pamięciową.
+D. Procesy nie mogą się komunikować bezpośrednio, muszą używać mechanizmów takich jak semafory lub zmienne warunkowe
+	ODP:A
+
+
+5. Które z poniższych warunków są wymagane do wystąpienia deadlocku w systemie wielowątkowym?
+
+A) Wątki muszą mieć wzajemne zablokowanie zasobów.
+B) Wątki muszą czekać na zasoby, które są już zablokowane przez inne wątki.
+C) Wątki muszą próbować uzyskać zasoby w tej samej kolejności.
+D) Wątki muszą posiadać zasoby w nieokreślonej kolejności.
+	ODP:A,B
