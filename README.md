@@ -1,8 +1,8 @@
-# JobScraper
+# Treści zadań
 
 
 
-
+![alt text](https://github.com/bilusss/JobScraperJava/blob/main/zadania/tresci_zadan.png?raw=true)
 
 
 # JobScraper
