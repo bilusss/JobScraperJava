@@ -37,6 +37,7 @@ public class JustJoinItScraper {
     private boolean driverInitialized = false;
     private final HelloApplication ui;
     private final Map<String, Boolean> processedLinks = new ConcurrentHashMap<>();
+    private Thread scraperThread;
 
     // Rate limiting
     private final long requestDelay = 2000; // 2 seconds between requests
@@ -53,10 +54,10 @@ public class JustJoinItScraper {
     }
 
     public void startScraping() {
-        Thread scraperThread = new Thread(() -> {
+        scraperThread = new Thread(() -> {
             try {
                 initializeDriver();
-                if (!finishedScrolling.get()){
+                if (!finishedScrolling.get()) {
                     scrollAndCollectLinks();
                 }
                 collectOfferLinks();
@@ -181,95 +182,75 @@ public class JustJoinItScraper {
     }
 
     public void scrapeOfferDetails(String offerUrl) {
-        WebDriver driver = null;
-        // Rate limiting
         try {
-            driver = driverPool.borrowDriver();
-            Thread.sleep(2000); // 2 seconds between requests
+            Thread.sleep(requestDelay); // Opóźnienie między żądaniami
 
             if (cancelled.get()) {
                 return;
             }
 
-            // Use a separate WebDriver instance for each job detail page to avoid issues
-            WebDriver offerDriver = null;
-            try {
-                ChromeOptions options = new ChromeOptions();
-                options.addArguments("--disable-dev-shm-usage");
-                options.addArguments("--no-sandbox");
-                options.addArguments("--headless");
+            ChromeOptions options = new ChromeOptions();
+            options.addArguments("--disable-dev-shm-usage");
+            options.addArguments("--no-sandbox");
+            options.addArguments("--headless");
 
-                offerDriver = new ChromeDriver(options);
+            WebDriver offerDriver = new ChromeDriver(options);
+            try {
                 offerDriver.get(offerUrl);
 
-                // Wait for page to load
-                Thread.sleep(3000);
+                // Czekanie na załadowanie strony
+                WebDriverWait wait = new WebDriverWait(offerDriver, Duration.ofSeconds(10));
+                wait.until(ExpectedConditions.presenceOfElementLocated(By.xpath("/html/body/div[2]/div/div/div/div[2]/div[2]/div[1]/div[2]/div[2]/h1")));
 
-                // Extract job details
-                String title = getTextByCss(offerDriver, "h1", "Brak tytułu");
-                String company = getTextByCss(offerDriver, "h2", "Brak firmy");
-                String salary = getTextByCss(offerDriver, "div.css-1b2ga3v", "Brak danych o zarobkach");
-                String location = getTextByCss(offerDriver, "div.css-11ost19", "Brak lokalizacji");
+                // Wyciągnięcie danych z HTML za pomocą XPath
+                String title = getTextByXPath(offerDriver, "/html/body/div[2]/div/div/div/div[2]/div[2]/div[1]/div[2]/div[2]/h1", "No Data");
+                String typeOfWork = getTextByXPath(offerDriver, "/html/body/div[2]/div/div/div/div[2]/div[2]/div[2]/div[1]/div[2]/div[2]", "No data");
+                String experience = getTextByXPath(offerDriver, "/html/body/div[2]/div/div/div/div[2]/div[2]/div[2]/div[2]/div[2]/div[2]", "No data");
+                String employmentType = getTextByXPath(offerDriver, "/html/body/div[2]/div/div/div/div[2]/div[2]/div[2]/div[3]/div[2]/div[2]", "No data");
+                String operatingMode = getTextByXPath(offerDriver, "/html/body/div[2]/div/div/div/div[2]/div[2]/div[2]/div[4]/div[2]/div[2]", "No data");
+                String location = getTextByXPath(offerDriver, "/html/body/div[2]/div/div/div/div[2]/div[2]/div[1]/div[2]/div[2]/div/div[2]/div/span", "No data");
+                if ("No data".equals(location)) {
+                    location = getTextByXPath(offerDriver, "/html/body/div[2]/div/div/div/div[2]/div[2]/div[1]/div[2]/div[2]/div/div[2]/button/div/span[1]", "No data") + getTextByXPath(offerDriver, "/html/body/div[2]/div/div/div/div[2]/div[2]/div[1]/div[2]/div[2]/div/div[2]/button/div/span[2]", "");
+                }
+                String company = getTextByXPath(offerDriver, "/html/body/div[2]/div/div/div/div[2]/div[2]/div[1]/div[2]/div[2]/div/div[1]", "No data");
+                String salary = getTextByCss(offerDriver, "span.css-1tka0qn", "No data");
 
-                // Extract additional details from the offer
-                String typeOfWork = getOfferDetail(offerDriver, "Type of work");
-                String experience = getOfferDetail(offerDriver, "Experience");
-                String operatingMode = getOfferDetail(offerDriver, "Operating mode");
-
+                // Dodanie oferty do listy
                 synchronized (jobOffers) {
-                    jobOffers.add(new JobOffer(title, company, salary, location, offerUrl,
-                            typeOfWork, experience, operatingMode));
+                    jobOffers.add(new JobOffer(title, company, salary, location, offerUrl, typeOfWork, experience, operatingMode));
                 }
 
-                System.out.println("[JustJoin.It] Scraped job details: " + title);
-                if (jobOffers.size() == offerLinksSet.size()) {
-                    finished.set(true);
-                    ui.updateUI(jobOffers.size(), offerLinksSet.size(), null);
-                    System.out.println("[JustJoin.It] All job offers scraped.");
-                }
+                System.out.println("[JustJoin.It] Scraped job details from JustJoinIt: " + title);
                 ui.updateOffersCount(jobOffers.size());
 
             } finally {
-                // Always close the driver
                 if (offerDriver != null) {
-                    try {
-                        offerDriver.quit();
-                    } catch (Exception e) {
-                        System.err.println("[JustJoin.It] Error closing offer driver: " + e.getMessage());
-                    }
+                    offerDriver.quit();
                 }
             }
 
         } catch (Exception e) {
-            System.err.println("[JustJoin.It] Error scraping offer: " + e.getMessage());
-        } finally {
-            if (driver != null) {
-                driverPool.returnDriver(driver);
-            }
+            System.err.println("[JustJoin.It] Error scraping JustJoinIt offer " + offerUrl + ": " + e.getMessage());
         }
     }
 
+    // Pomocnicza metoda do pobierania tekstu z użyciem CSS
     private String getTextByCss(WebDriver driver, String cssSelector, String defaultValue) {
         try {
             WebElement element = driver.findElement(By.cssSelector(cssSelector));
-            return element.getText();
+            return element.getText().isEmpty() ? defaultValue : element.getText();
         } catch (Exception e) {
             return defaultValue;
         }
     }
 
-    private String getOfferDetail(WebDriver driver, String label) {
+    // Nowa pomocnicza metoda do pobierania tekstu z użyciem XPath
+    private String getTextByXPath(WebDriver driver, String xpath, String defaultValue) {
         try {
-            List<WebElement> elements = driver.findElements(By.cssSelector("div.css-1bpmjmb"));
-            for (WebElement element : elements) {
-                if (element.getText().contains(label)) {
-                    WebElement valueElement = element.findElement(By.xpath("following-sibling::div"));
-                    return valueElement.getText();
-                }
-            }
-            return "Brak danych";
+            WebElement element = driver.findElement(By.xpath(xpath));
+            return element.getText().isEmpty() ? defaultValue : element.getText();
         } catch (Exception e) {
-            return "Brak danych";
+            return defaultValue;
         }
     }
 
@@ -292,7 +273,9 @@ public class JustJoinItScraper {
             System.out.println("[JustJoin.It]  Error waiting for page to load: " + e.getMessage());
         }
     }
-
+    public boolean isFinishedCollectingLinks() {
+        return finishedScrolling.get();
+    }
     public boolean isFinished() {
         return finished.get();
     }

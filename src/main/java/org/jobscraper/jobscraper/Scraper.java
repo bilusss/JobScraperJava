@@ -21,10 +21,13 @@ public class Scraper {
     private String distance;
     private final boolean scrapePracuj;
     private final boolean scrapeJustJoinIt;
+    private final AtomicBoolean justJoinItLinksCollected = new AtomicBoolean(false);
+    private final AtomicBoolean pracujPlLinksCollected = new AtomicBoolean(false);
     private final HelloApplication ui;
     private boolean finished = false;
     private int maxOffers = 100; // Default value
     private AtomicBoolean isCancelled = new AtomicBoolean(false);
+    private AtomicBoolean initialScrapingDone = new AtomicBoolean(false);
     private ExecutorService executor;
     private static final String[] USER_AGENTS = {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
@@ -61,28 +64,43 @@ public class Scraper {
                 if (scrapeJustJoinIt) {
                     justJoinItScraper = new JustJoinItScraper(jobOffers, keywords, location, offerLinks, offerLinksSet, ui);
                     justJoinItScraper.startScraping();
+                    // Set flag to false initially for JustJoinIt
+                    justJoinItLinksCollected.set(false);
+                } else {
+                    // If not scraping JustJoinIt, mark as already completed
+                    justJoinItLinksCollected.set(true);
                 }
 
                 if (scrapePracuj) {
                     pracujPlScraper = new PracujPlScraper(jobOffers, keywords, location, offerLinks, offerLinksSet, ui);
                     pracujPlScraper.startScraping();
+                    // Set flag to false initially for PracujPl
+                    pracujPlLinksCollected.set(false);
+                } else {
+                    // If not scraping PracujPl, mark as already completed
+                    pracujPlLinksCollected.set(true);
                 }
 
                 // Create thread pool for processing offers
-                executor = Executors.newFixedThreadPool(3);
+                executor = Executors.newFixedThreadPool(5); // Adjust the number of threads as needed
 
                 // Monitor the progress and process links
                 JustJoinItScraper finalJustJoinItScraper = justJoinItScraper;
                 PracujPlScraper finalPracujPlScraper = pracujPlScraper;
                 System.out.println("Scraping details started...");
+
                 while (!isCancelled.get()) {
+                    // Check if both scrapers have finished collecting links
+                    if (scrapeJustJoinIt && finalJustJoinItScraper != null && finalJustJoinItScraper.isFinishedCollectingLinks()) {
+                        justJoinItLinksCollected.set(true);
+                    }
+
+                    if (scrapePracuj && finalPracujPlScraper != null && finalPracujPlScraper.isFinishedCollectingLinks()) {
+                        pracujPlLinksCollected.set(true);
+                    }
+
                     boolean justJoinItDone = finalJustJoinItScraper == null || finalJustJoinItScraper.isFinished();
                     boolean pracujPlDone = finalPracujPlScraper == null || finalPracujPlScraper.isFinished();
-
-                    // If both scrapers are done, break the loop
-                    if (justJoinItDone && pracujPlDone) {
-                        break;
-                    }
 
                     // Process new links in batches
                     List<String> unprocessedLinks = new ArrayList<>();
@@ -95,13 +113,14 @@ public class Scraper {
                         }
                     }
 
-                    // Submit tasks to process the links
+                    // Submit tasks to process the links TODO
                     for (String link : unprocessedLinks) {
                         if (isCancelled.get()) break;
 
                         final String finalLink = link;
                         executor.submit(() -> {
                             if (finalLink.contains("justjoin.it") && finalJustJoinItScraper != null) {
+
                                 finalJustJoinItScraper.scrapeOfferDetails(finalLink);
                             } else if (finalLink.contains("pracuj.pl") && finalPracujPlScraper != null) {
                                 finalPracujPlScraper.scrapeOfferDetails(finalLink);
@@ -109,28 +128,48 @@ public class Scraper {
                         });
                     }
 
-                    // Update UI
+                    // Update UI with current progress
                     ui.updateUI(jobOffers.size(), offerLinksSet.size(), null);
                     ui.updateLinksCount(offerLinksSet.size());
 
-                    Thread.sleep(1000);
+                    // Check if both scrapers have finished collecting links and all collected links have been processed
+                    if (justJoinItLinksCollected.get() && pracujPlLinksCollected.get() &&
+                            processedLinks.size() >= offerLinksSet.size() &&
+                            jobOffers.size() >= processedLinks.size()) {
+
+                        // Wait for all tasks in executor to complete
+                        executor.shutdown();
+                        boolean terminated = executor.awaitTermination(30, TimeUnit.SECONDS);
+                        if (terminated) {
+                            System.out.println("Scraping details finished...");
+                            ui.finishScraping(jobOffers.size());
+                            ui.updateUI(jobOffers.size(), offerLinks.size(), true);
+                            break; // Exit the loop once all tasks are done
+                        } else {
+                            System.err.println("Executor did not terminate in time, forcing shutdown...");
+                            executor.shutdownNow();
+                        }
+                    }
+
+                    Thread.sleep(1000); // Small delay to avoid busy-waiting
                 }
 
-                // Shutdown the executor and wait for remaining tasks
-                if (executor != null && !executor.isShutdown()) {
-                    executor.shutdown();
-                    executor.awaitTermination(5, TimeUnit.SECONDS);
-                }
-
-                // Cancel scrapers if they're still running
+                // Cancel scrapers if they're still running (in case of cancellation)
                 if (finalJustJoinItScraper != null) {
+                    System.out.println("Cancelling JustJoinIt scraper...");
                     finalJustJoinItScraper.cancel();
                 }
                 if (finalPracujPlScraper != null) {
                     finalPracujPlScraper.cancel();
+                    System.out.println("Cancelling PracujPl scraper...");
                 }
 
-                // Update UI with final counts
+                // Ensure executor is shut down
+                if (executor != null && !executor.isShutdown()) {
+                    executor.shutdownNow();
+                }
+
+                // Final UI update
                 ui.updateUI(jobOffers.size(), offerLinks.size(), true);
 
                 // Copy results to main lists
@@ -143,13 +182,16 @@ public class Scraper {
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                System.err.println("Scraping interrupted: " + e.getMessage());
+            } catch (Exception e) {
+                System.err.println("Error in startScraping: " + e.getMessage());
+                e.printStackTrace();
             }
         });
 
         scraperThread.setDaemon(true);
         scraperThread.start();
     }
-
 
     private synchronized void checkIfFinished() {
         boolean pracujDone = !scrapePracuj || new PracujPlScraper(jobOffers, keywords, location, offerLinks, offerLinksSet, ui).isFinished();

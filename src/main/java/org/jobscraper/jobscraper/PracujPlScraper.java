@@ -5,14 +5,19 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import org.openqa.selenium.By;
+import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.WebElement;
+import org.openqa.selenium.chrome.ChromeDriver;
+import org.openqa.selenium.chrome.ChromeOptions;
+import org.openqa.selenium.support.ui.ExpectedConditions;
+import org.openqa.selenium.support.ui.WebDriverWait;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class PracujPlScraper {
@@ -26,11 +31,13 @@ public class PracujPlScraper {
     private final AtomicBoolean finished = new AtomicBoolean(false);
     private final HelloApplication ui;
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
+    private final AtomicBoolean linksCollectionFinished = new AtomicBoolean(false);
     private Thread scraperThread;
     private static final String[] USER_AGENTS = {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1 Mobile/15E148 Safari/604.1",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0"
     };
 
@@ -58,6 +65,7 @@ public class PracujPlScraper {
                     Thread.sleep(2000); // Rate limiting
                     ui.updateUI(jobOffers.size(), offerLinksSet.size(), null);
                 }
+                System.out.println("[Pracuj.pl] Finished scraping job offers.");
             } catch (Exception e) {
                 System.err.println("[Pracuj.pl] Error: " + e.getMessage());
                 e.printStackTrace();
@@ -83,7 +91,6 @@ public class PracujPlScraper {
                 .followRedirects(true)
                 .execute();
 
-        // Check if there is a redirect
         if (response.hasHeader("Location")) {
             String redirectUrl = response.header("Location");
             if (redirectUrl.contains("it.pracuj.pl")) {
@@ -112,6 +119,7 @@ public class PracujPlScraper {
         if (offerLinksElements.isEmpty()) {
             System.out.println("[Pracuj.pl] No more job offers found on page " + currentPage);
             finished.set(true);
+            linksCollectionFinished.set(true);
             return;
         }
 
@@ -129,38 +137,89 @@ public class PracujPlScraper {
         Thread.sleep(4000); // Rate limiting
     }
 
+    public boolean isFinishedCollectingLinks() {
+        return linksCollectionFinished.get();
+    }
+
     public void scrapeOfferDetails(String offerUrl) {
+        WebDriver offerDriver = null;
         try {
+            Thread.sleep(2000); // Rate limiting
+
+            if (cancelled.get()) {
+                return;
+            }
+
+            ChromeOptions options = new ChromeOptions();
+            options.addArguments("--disable-dev-shm-usage");
+            options.addArguments("--no-sandbox");
+            options.addArguments("--headless");
+
+            offerDriver = new ChromeDriver(options);
+            offerDriver.get(offerUrl);
+
+            // Czekanie na załadowanie strony
+            WebDriverWait wait = new WebDriverWait(offerDriver, Duration.ofSeconds(10));
+            wait.until(ExpectedConditions.presenceOfElementLocated(By.cssSelector("[data-test='text-positionName']")));
+
+            // Wyciągnięcie danych za pomocą selektorów CSS i atrybutów data-test
+            String title = getTextByCss(offerDriver, "[data-test='text-positionName']", "Brak tytułu");
+            String company = getTextByCss(offerDriver, "[data-test='text-employerName']", "Brak firmy")
+                    .replace("About the company", "").replace("O firmie", "").trim();
+            String salary = getTextByCss(offerDriver, "[data-test='text-earningAmount']", "Undisclosed Salary");
+
+            // Lokalizacja - szukamy elementu z data-test="sections-benefit-workplaces"
+            String location = "Brak lokalizacji";
             try {
-                Thread.sleep(2000); // Rate limiting
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
+                WebElement locationElement = offerDriver.findElement(By.cssSelector("[data-test='sections-benefit-workplaces'] [data-test='offer-badge-title']"));
+                location = locationElement.getText();
+            } catch (Exception e) {
+                try {
+                    WebElement altLocationElement = offerDriver.findElement(By.cssSelector("[data-test='sections-benefit-workplaces'] [data-test='offer-badge-description']"));
+                    location = altLocationElement.getText();
+                } catch (Exception ignored) {}
             }
 
-            Document offerDoc = Jsoup.connect(offerUrl)
-                    .userAgent(getRandomUserAgent())
-                    .timeout(10000)
-                    .get();
+            // Typ umowy
+            String typeOfWork = getTextByCss(offerDriver, "[data-test='sections-benefit-contracts'] [data-test='offer-badge-title']", "Brak danych");
 
-            String title = offerDoc.selectFirst("h1") != null ? offerDoc.selectFirst("h1").text() : "Brak tytułu";
-            String company = offerDoc.selectFirst("p[class*=company]") != null ? offerDoc.selectFirst("p[class*=company]").text() : "Brak firmy";
-            String salary = offerDoc.selectFirst("div[class*=salary]") != null ? offerDoc.selectFirst("div[class*=salary]").text() : "Brak danych o zarobkach";
-            String locationDetails = offerDoc.selectFirst("span[class*=location]") != null ? offerDoc.selectFirst("span[class*=location]").text() : "Brak lokalizacji";
-            String typeOfWork = offerDoc.selectFirst("div:contains(Typ umowy) + div") != null ? offerDoc.selectFirst("div:contains(Typ umowy) + div").text() : "Brak danych";
-            String experience = offerDoc.selectFirst("div:contains(Poziom doświadczenia) + div") != null ? offerDoc.selectFirst("div:contains(Poziom doświadczenia) + div").text() : "Brak danych";
-            String operatingMode = offerDoc.selectFirst("div:contains(Tryb pracy) + div") != null ? offerDoc.selectFirst("div:contains(Tryb pracy) + div").text() : "Brak danych";
+            // Doświadczenie
+            String experience = getTextByCss(offerDriver, "[data-test='sections-benefit-employment-type-name'] [data-test='offer-badge-title']", "Brak danych");
 
+            // Tryb pracy
+            String operatingMode = getTextByCss(offerDriver, "[data-scroll-id='work-modes'] [data-test='offer-badge-title']", "Brak danych");
+
+            // Dodanie oferty do listy
             synchronized (jobOffers) {
-                jobOffers.add(new JobOffer(title, company, salary, locationDetails, offerUrl, typeOfWork, experience, operatingMode));
+                jobOffers.add(new JobOffer(title, company, salary, location, offerUrl, typeOfWork, experience, operatingMode));
             }
+
+            System.out.println("[Pracuj.pl] Scraped job details: " + title);
+            ui.updateOffersCount(jobOffers.size());
+
             if (jobOffers.size() == offerLinksSet.size()) {
                 finished.set(true);
                 ui.updateUI(jobOffers.size(), offerLinksSet.size(), null);
                 System.out.println("[Pracuj.pl] All job offers scraped.");
             }
-            ui.updateOffersCount(jobOffers.size());
-        } catch (IOException e) {
+
+        } catch (Exception e) {
             System.err.println("[Pracuj.pl] Error scraping offer " + offerUrl + ": " + e.getMessage());
+        } finally {
+            if (offerDriver != null) {
+                offerDriver.quit();
+            }
+        }
+    }
+
+    // Pomocnicza metoda do pobierania tekstu z użyciem CSS
+    private String getTextByCss(WebDriver driver, String cssSelector, String defaultValue) {
+        try {
+            WebElement element = driver.findElement(By.cssSelector(cssSelector));
+            String text = element.getText();
+            return text.isEmpty() ? defaultValue : text;
+        } catch (Exception e) {
+            return defaultValue;
         }
     }
 
