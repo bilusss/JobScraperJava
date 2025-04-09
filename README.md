@@ -62,7 +62,7 @@ After launching the application, a GUI window will open where you can:
 - Performance depends on the structure and availability of the scraped websites.
 
 ## Author
-The project was created by **[bilusss](https://github.com/bilusss)** as part of the JPWP course.
+The project was created by **[bilusss](https://github.com/bilusss)** and **[ocharek](https://github.com/ocharek)** as part of the JPWP course.
 
 ---
 
