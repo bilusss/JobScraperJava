@@ -1,9 +1,5 @@
 package org.jobscraper.jobscraper;
 
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
-
-import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -12,23 +8,22 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Scraper {
-    private final List<JobOffer> jobOffers = new ArrayList<>();
-    private final List<String> offerLinks = new ArrayList<>();
-    private final Set<String> offerLinksSet = Collections.synchronizedSet(new HashSet<>()); // Added as class field
-    private final Set<String> processedLinks = Collections.synchronizedSet(new HashSet<>());
+    private final List<JobOffer> jobOffers = new ArrayList<>(); // Lista ofert pracy dostępna dla wielu wątków
+    private final List<String> offerLinks = new ArrayList<>(); // Lista linków do ofert dostępna dla wielu wątków
+    private final Set<String> offerLinksSet = Collections.synchronizedSet(new HashSet<>()); // Thread-safe zbiór linków ofert
+    private final Set<String> processedLinks = Collections.synchronizedSet(new HashSet<>()); // Thread-safe zbiór przetworzonych linków
     private final String keywords;
     private final String location;
     private String distance;
     private final boolean scrapePracuj;
     private final boolean scrapeJustJoinIt;
-    private final AtomicBoolean justJoinItLinksCollected = new AtomicBoolean(false);
-    private final AtomicBoolean pracujPlLinksCollected = new AtomicBoolean(false);
+    private final AtomicBoolean justJoinItLinksCollected = new AtomicBoolean(false); // Thread-safe flaga informująca czy zakończono zbieranie linków z JustJoinIt
+    private final AtomicBoolean pracujPlLinksCollected = new AtomicBoolean(false); // Thread-safe flaga informująca czy zakończono zbieranie linków z Pracuj.pl
     private final HelloApplication ui;
     private boolean finished = false;
-    private int maxOffers = 100; // Default value
-    private AtomicBoolean isCancelled = new AtomicBoolean(false);
-    private AtomicBoolean initialScrapingDone = new AtomicBoolean(false);
-    private ExecutorService executor;
+    private AtomicBoolean isCancelled = new AtomicBoolean(false); // Thread-safe flaga do anulowania operacji
+    private ExecutorService executor; // Pula wątków do równoległego przetwarzania linków
+
     private static final String[] USER_AGENTS = {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
@@ -46,15 +41,12 @@ public class Scraper {
         this.ui = ui;
     }
 
-    private String getRandomUserAgent() {
-        int index = (int) (Math.random() * USER_AGENTS.length);
-        return USER_AGENTS[index];
-    }
-
+    // Metoda startScraping uruchamia nowy wątek do zarządzania procesem scrapowania
     public void startScraping() {
         Thread scraperThread = new Thread(() -> {
+            // Kod uruchamiany w osobnym wątku
             try {
-                // Use CopyOnWriteArrayList for thread safety
+                // Użycie CopyOnWriteArrayList dla bezpieczeństwa wątków - kolekcja zoptymalizowana dla wielu czytelników i niewielu pisarzy
                 List<JobOffer> jobOffers = new CopyOnWriteArrayList<>();
 
                 // Create and start the individual scrapers
@@ -72,7 +64,7 @@ public class Scraper {
                 }
 
                 if (scrapePracuj) {
-                    pracujPlScraper = new PracujPlScraper(jobOffers, keywords, location, offerLinks, offerLinksSet, ui);
+                    pracujPlScraper = new PracujPlScraper(jobOffers, keywords, location, distance, offerLinks, offerLinksSet, ui);
                     pracujPlScraper.startScraping();
                     // Set flag to false initially for PracujPl
                     pracujPlLinksCollected.set(false);
@@ -81,16 +73,17 @@ public class Scraper {
                     pracujPlLinksCollected.set(true);
                 }
 
-                // Create thread pool for processing offers
-                executor = Executors.newFixedThreadPool(5); // Adjust the number of threads as needed
+                // Tworzenie puli wątków do równoległego przetwarzania ofert pracy
+                executor = Executors.newFixedThreadPool(5); // Tworzy pulę 5 wątków roboczych
 
                 // Monitor the progress and process links
                 JustJoinItScraper finalJustJoinItScraper = justJoinItScraper;
                 PracujPlScraper finalPracujPlScraper = pracujPlScraper;
                 System.out.println("Scraping details started...");
 
+                // Monitorowanie postępu i przetwarzanie linków w pętli
                 while (!isCancelled.get()) {
-                    // Check if both scrapers have finished collecting links
+                    // Sprawdzanie flag atomowych w sposób thread-safe
                     if (scrapeJustJoinIt && finalJustJoinItScraper != null && finalJustJoinItScraper.isFinishedCollectingLinks()) {
                         justJoinItLinksCollected.set(true);
                     }
@@ -99,12 +92,10 @@ public class Scraper {
                         pracujPlLinksCollected.set(true);
                     }
 
-                    boolean justJoinItDone = finalJustJoinItScraper == null || finalJustJoinItScraper.isFinished();
-                    boolean pracujPlDone = finalPracujPlScraper == null || finalPracujPlScraper.isFinished();
-
-                    // Process new links in batches
+                    // Zbieranie nieprzetworzonych linków w celu równoległego przetwarzania
                     List<String> unprocessedLinks = new ArrayList<>();
-                    synchronized (offerLinks) {
+                    synchronized (offerLinks) { // Synchronizacja dostępu do współdzielonej listy
+                        // Sprawdzanie i dodawanie nowych linków do przetworzenia
                         for (String link : offerLinks) {
                             if (!processedLinks.contains(link)) {
                                 unprocessedLinks.add(link);
@@ -113,14 +104,14 @@ public class Scraper {
                         }
                     }
 
-                    // Submit tasks to process the links TODO
+                    // Równoległe przetwarzanie linków przy użyciu puli wątków
                     for (String link : unprocessedLinks) {
                         if (isCancelled.get()) break;
 
                         final String finalLink = link;
-                        executor.submit(() -> {
+                        executor.submit(() -> { // Delegowanie zadania do puli wątków
+                            // Przetwarzanie linku przez odpowiedni scraper
                             if (finalLink.contains("justjoin.it") && finalJustJoinItScraper != null) {
-
                                 finalJustJoinItScraper.scrapeOfferDetails(finalLink);
                             } else if (finalLink.contains("pracuj.pl") && finalPracujPlScraper != null) {
                                 finalPracujPlScraper.scrapeOfferDetails(finalLink);
@@ -132,26 +123,28 @@ public class Scraper {
                     ui.updateUI(jobOffers.size(), offerLinksSet.size(), null);
                     ui.updateLinksCount(offerLinksSet.size());
 
-                    // Check if both scrapers have finished collecting links and all collected links have been processed
+                    // Sprawdzanie czy wszystkie zadania zostały zakończone
                     if (justJoinItLinksCollected.get() && pracujPlLinksCollected.get() &&
                             processedLinks.size() >= offerLinksSet.size() &&
                             jobOffers.size() >= processedLinks.size()) {
 
-                        // Wait for all tasks in executor to complete
+                        // Bezpieczne zatrzymanie puli wątków
                         executor.shutdown();
-                        boolean terminated = executor.awaitTermination(30, TimeUnit.SECONDS);
+                        boolean terminated = executor.awaitTermination(30, TimeUnit.SECONDS); // Oczekiwanie na zakończenie wszystkich zadań
                         if (terminated) {
+                            // Informacja o zakończeniu i aktualizacja UI
                             System.out.println("Scraping details finished...");
                             ui.finishScraping(jobOffers.size());
                             ui.updateUI(jobOffers.size(), offerLinks.size(), true);
                             break; // Exit the loop once all tasks are done
                         } else {
+                            // Wymuszenie zamknięcia puli wątków jeśli nie zakończyła pracy w określonym czasie
                             System.err.println("Executor did not terminate in time, forcing shutdown...");
                             executor.shutdownNow();
                         }
                     }
 
-                    Thread.sleep(1000); // Small delay to avoid busy-waiting
+                    Thread.sleep(1000); // Mały delay aby uniknąć zbyt intensywnego sprawdzania warunku
                 }
 
                 // Cancel scrapers if they're still running (in case of cancellation)
@@ -164,7 +157,7 @@ public class Scraper {
                     System.out.println("Cancelling PracujPl scraper...");
                 }
 
-                // Ensure executor is shut down
+                // Upewnienie się, że pula wątków jest zamknięta
                 if (executor != null && !executor.isShutdown()) {
                     executor.shutdownNow();
                 }
@@ -189,19 +182,8 @@ public class Scraper {
             }
         });
 
-        scraperThread.setDaemon(true);
-        scraperThread.start();
-    }
-
-    private synchronized void checkIfFinished() {
-        boolean pracujDone = !scrapePracuj || new PracujPlScraper(jobOffers, keywords, location, offerLinks, offerLinksSet, ui).isFinished();
-        boolean justJoinItDone = !scrapeJustJoinIt || new JustJoinItScraper(jobOffers, keywords, location, offerLinks, offerLinksSet, ui).isFinished();
-
-        finished = pracujDone && justJoinItDone;
-
-        if (finished && !isCancelled.get()) {
-            ui.finishScraping(jobOffers.size(), offerLinksSet.size());
-        }
+        scraperThread.setDaemon(true); // Ustawienie wątku jako daemon - zakończy się gdy program główny się zakończy
+        scraperThread.start(); // Uruchomienie wątku
     }
 
     public boolean isFinished() {
@@ -212,10 +194,11 @@ public class Scraper {
         return new ArrayList<>(jobOffers);
     }
 
+    // Metoda do anulowania procesu scrapowania
     public void cancel() {
-        isCancelled.set(true);
+        isCancelled.set(true); // Thread-safe ustawienie flagi anulowania
         if (executor != null) {
-            executor.shutdownNow();
+            executor.shutdownNow(); // Natychmiastowe zatrzymanie wszystkich wątków w puli
         }
         ui.finishScraping(jobOffers.size());
     }

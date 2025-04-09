@@ -241,7 +241,6 @@ public class HelloApplication extends Application {
             finishScraping(jobOffersSize);
             return;
         }
-//        System.out.println("FINISHED: " + finished);
         updateProgress(jobOffersSize, offerLinksSize);
         updateOffersCount(jobOffersSize);
         updateLinksCount(offerLinksSize);

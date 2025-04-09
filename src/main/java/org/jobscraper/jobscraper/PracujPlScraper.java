@@ -15,7 +15,6 @@ import org.openqa.selenium.support.ui.WebDriverWait;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -41,7 +40,7 @@ public class PracujPlScraper {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0"
     };
 
-    public PracujPlScraper(List<JobOffer> jobOffers, String keywords, String location,
+    public PracujPlScraper(List<JobOffer> jobOffers, String keywords, String location, String distance,
                            List<String> offerLinks, Set<String> offerLinksSet, HelloApplication ui) {
         this.jobOffers = jobOffers;
         this.keywords = keywords != null && !keywords.isEmpty() ? keywords : "";
@@ -49,7 +48,7 @@ public class PracujPlScraper {
         this.offerLinks = offerLinks;
         this.offerLinksSet = offerLinksSet;
         this.ui = ui;
-        this.distance = "0"; // Default value
+        this.distance = distance != null && !distance.isEmpty() ? distance : "0";
     }
 
     private String getRandomUserAgent() {
@@ -235,10 +234,6 @@ public class PracujPlScraper {
             params.append("?rd=").append(distance);
         }
         return params.toString();
-    }
-
-    public boolean isFinished() {
-        return finished.get();
     }
 
     public void cancel() {

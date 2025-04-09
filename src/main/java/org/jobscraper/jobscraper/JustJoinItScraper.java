@@ -11,12 +11,10 @@ import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
 import java.time.Duration;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -36,7 +34,6 @@ public class JustJoinItScraper {
     private WebDriver driver;
     private boolean driverInitialized = false;
     private final HelloApplication ui;
-    private final Map<String, Boolean> processedLinks = new ConcurrentHashMap<>();
     private Thread scraperThread;
 
     // Rate limiting
@@ -190,9 +187,9 @@ public class JustJoinItScraper {
             }
 
             ChromeOptions options = new ChromeOptions();
-            options.addArguments("--disable-dev-shm-usage");
-            options.addArguments("--no-sandbox");
-            options.addArguments("--headless");
+            options.addArguments("--disable-dev-shm-usage");// dla stabilności
+            options.addArguments("--no-sandbox");// dla stabilności
+            options.addArguments("--headless");// zaoszczędzenie zasobów
 
             WebDriver offerDriver = new ChromeDriver(options);
             try {
@@ -275,9 +272,6 @@ public class JustJoinItScraper {
     }
     public boolean isFinishedCollectingLinks() {
         return finishedScrolling.get();
-    }
-    public boolean isFinished() {
-        return finished.get();
     }
 
     public void cancel() {
